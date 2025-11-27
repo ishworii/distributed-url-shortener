@@ -12,19 +12,22 @@ use state::{AppState, SharedState, create_pg_pool, create_redis_pool};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-const REDIS_TTL_SECONDS: u64 = 60 * 60 * 24 * 7;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis/".to_string());
     let db_url = std::env::var("DB_READ_URL")
-        .unwrap_or_else(|_| "postgresql://user:pass@db_master:5432".to_string());
+        .unwrap_or_else(|_| "postgresql://user:password@db_master:5432/urls".to_string());
+    let redis_ttl_seconds: u64 = std::env::var("REDIS_CACHE_TTL")
+        .unwrap_or_else(|_| "604800".to_string())
+        .parse()
+        .unwrap_or(604800);
     let redis_pool = create_redis_pool(&redis_url)?;
     let db_read_pool = create_pg_pool(&db_url)?;
 
     let state = Arc::new(AppState {
         redis_pool,
         db_read_pool,
+        redis_ttl_seconds,
     });
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -72,7 +75,7 @@ async fn redirect_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let _: () = redis_conn
-        .set_ex(&short_key, &long_url, REDIS_TTL_SECONDS)
+        .set_ex(&short_key, &long_url, state.redis_ttl_seconds)
         .await
         .unwrap_or(());
 

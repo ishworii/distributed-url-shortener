@@ -8,6 +8,7 @@ use tokio_postgres::{Config, NoTls};
 pub struct AppState {
     pub redis_pool: RedisPool,
     pub db_read_pool: PgPool,
+    pub redis_ttl_seconds: u64,
 }
 
 pub type SharedState = Arc<AppState>;

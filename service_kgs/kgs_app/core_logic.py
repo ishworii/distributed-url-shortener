@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import asyncpg
 import redis.asyncio as redis
@@ -7,9 +8,11 @@ BASE = 62
 CHARACTERS = (
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
-BLOCK_SIZE = 1000
-REDIS_KEY_SET = "available_keys"
-KGS_DB_URL = "postgresql://user:pass@kgs_db:5432/keys"
+BLOCK_SIZE = int(os.environ.get("KGS_BLOCK_SIZE", 1000))
+REDIS_KEY_SET = os.environ.get("REDIS_KEY_SET", "available_keys")
+KGS_DB_URL = os.environ.get("KGS_DB_URL", "postgresql://user:password@db_master:5432/urls")
+REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 
 
 def encode_base62(decimal_id):
@@ -53,7 +56,7 @@ async def reserve_and_generate_block(redis_client):
 
 
 async def main():
-    redis_client = redis.Redis(host="redis", port=6379)
+    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
     while True:
         key_count = await redis_client.scard(REDIS_KEY_SET)
         print(f"Current available keys in Redis : {key_count}")
@@ -62,3 +65,7 @@ async def main():
             await reserve_and_generate_block(redis_client)
 
         await asyncio.sleep(5)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

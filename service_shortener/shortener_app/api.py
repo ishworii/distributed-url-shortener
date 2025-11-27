@@ -11,7 +11,9 @@ DB_URL = os.environ.get(
 )
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-REDIS_KEY_SET = "available_keys"
+REDIS_KEY_SET = os.environ.get("REDIS_KEY_SET", "available_keys")
+REDIS_CACHE_TTL = int(os.environ.get("REDIS_CACHE_TTL", 60 * 60 * 24 * 7))
+SHORT_URL_DOMAIN = os.environ.get("SHORT_URL_DOMAIN", "http://tiny.url")
 
 
 class URLRequest(BaseModel):
@@ -73,10 +75,10 @@ async def shorten_url(request: URLRequest):
         if existing_mapping:
             existing_key = existing_mapping["short_key"]
             await redis_client.set(
-                existing_key, long_url, ex=60 * 60 * 24 * 7
+                existing_key, long_url, ex=REDIS_CACHE_TTL
             )
             return URLResponse(
-                short_url=f"http://tiny.url/{existing_key}"
+                short_url=f"{SHORT_URL_DOMAIN}/{existing_key}"
             )
 
     short_key = await get_unique_key()
@@ -92,8 +94,8 @@ async def shorten_url(request: URLRequest):
             raise HTTPException(
                 status_code=500, detail="Database write error."
             )
-    await redis_client.set(short_key, long_url, ex=60 * 60 * 24 * 7)
-    return URLResponse(short_url=f"http://tiny.url/{short_key}")
+    await redis_client.set(short_key, long_url, ex=REDIS_CACHE_TTL)
+    return URLResponse(short_url=f"{SHORT_URL_DOMAIN}/{short_key}")
 
 
 @app.get("/health")
