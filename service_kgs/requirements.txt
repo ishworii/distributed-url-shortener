@@ -1,0 +1,2 @@
+asyncpg==0.31
+redis==7.1
