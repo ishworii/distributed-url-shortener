@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
-        .route("/:key", get(redirect_handler))
+        .route("/{key}", get(redirect_handler))
         .with_state(state);
 
     let listener = TcpListener::bind("0.0.0.0:8000").await?;

@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tinyurl_redis
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    networks:
+      - tinyurl_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  db_master:
+    image: postgres:15-alpine
+    container_name: tinyurl_postgres
+    env_file:
+      - .env
+    volumes:
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    ports:
+      - "${DB_PORT}:${DB_PORT}"
+    networks:
+      - tinyurl_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- SERVICES ---
+  kgs:
+    build:
+      context: ./service_kgs
+    container_name: tinyurl_kgs
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      db_master:
+        condition: service_healthy
+    networks:
+      - tinyurl_net
+
+  shortener:
+    build:
+      context: ./service_shortener
+    container_name: tinyurl_shortener
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      db_master:
+        condition: service_healthy
+      kgs:
+        condition: service_started
+    networks:
+      - tinyurl_net
+
+  redirector:
+    build:
+      context: ./service_redirector
+    container_name: tinyurl_redirector
+    env_file:
+      - .env
+    ports:
+      - "8001:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      db_master:
+        condition: service_healthy
+      shortener:
+        condition: service_started
+    networks:
+      - tinyurl_net
+
+networks:
+  tinyurl_net:
+    driver: bridge
