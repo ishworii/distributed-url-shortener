@@ -1,9 +1,8 @@
 use deadpool_postgres::{
-    Config as PgConfig, Manager, ManagerConfig, Pool as PgPool, RecyclingMethod,
-    Runtime as PgRuntime,
+    Manager, ManagerConfig, Pool as PgPool, RecyclingMethod,
 };
 use deadpool_redis::Pool as RedisPool;
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 use tokio_postgres::{Config, NoTls};
 
 pub struct AppState {
