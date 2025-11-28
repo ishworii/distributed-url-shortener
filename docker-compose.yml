@@ -1,4 +1,6 @@
 services:
+  # --- INFRASTRUCTURE (Tier 0) ---
+  
   redis:
     image: redis:7-alpine
     container_name: tinyurl_redis
@@ -29,7 +31,30 @@ services:
       timeout: 5s
       retries: 5
 
-  # --- SERVICES ---
+  # --- KAFKA INFRASTRUCTURE (For Analytics) ---
+
+  kafka:
+    image: 'apache/kafka-native:latest'
+    container_name: tinyurl_kafka
+    ports:
+      - '9092:9092'
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - CLUSTER_ID=5L6g3nShT-eMCtK--X86sw
+    networks: [tinyurl_net]
+
+
+  # --- SERVICES (Tier 1 & 2) ---
+
   kgs:
     build:
       context: ./service_kgs
@@ -75,8 +100,26 @@ services:
         condition: service_healthy
       db_master:
         condition: service_healthy
+      kafka: # Redirector (Producer) depends on Kafka being ready
+        condition: service_started
       shortener:
         condition: service_started
+    networks:
+      - tinyurl_net
+
+  # 4. Analytics Worker (The Kafka Consumer)
+  analytics_worker:
+    build:
+      context: ./service_analytics
+    container_name: tinyurl_analytics_worker
+    env_file:
+      - .env
+    # Worker needs Kafka to read from and DB to write to
+    depends_on:
+      kafka:
+        condition: service_started
+      db_master:
+        condition: service_healthy
     networks:
       - tinyurl_net
 
