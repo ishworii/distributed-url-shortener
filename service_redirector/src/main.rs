@@ -50,6 +50,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn send_click_event(short_key: String, producer: FutureProducer) {
+    tokio::spawn(async move {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let payload = format!(r#"{{"key":"{}","timestamp":{}}}"#, short_key, timestamp);
+
+        println!("Preparing to send click event for key: {}", short_key);
+        println!("Payload: {}", payload);
+
+        let click_topic =
+            std::env::var("CLICK_TOPIC").unwrap_or_else(|_| "click_events".to_string());
+        println!("Sending to topic: {}", click_topic);
+
+        let record = FutureRecord::to(&click_topic)
+            .key(&short_key)
+            .payload(&payload);
+        let kafka_timeout =
+            std::env::var("KAFKA_TIMEOUT_MS").unwrap_or_else(|_| "5000".to_string());
+        let kafka_timeout = kafka_timeout
+            .parse()
+            .expect("Failed to convert kafka timeout to u64");
+        let queue_timeout = Timeout::After(Duration::from_millis(kafka_timeout));
+
+        match producer.send(record, queue_timeout).await {
+            Ok(_) => println!("Successfully sent click event to Kafka for key: {}", short_key),
+            Err((e, _)) => eprintln!("Failed to send click event to Kafka: {:?}", e),
+        }
+    });
+}
+
 async fn redirect_handler(
     Path(short_key): Path<String>,
     State(state): State<SharedState>,
@@ -66,6 +98,8 @@ async fn redirect_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if let Some(url) = cached_url {
+        // Send click event to Kafka even for cache hits
+        send_click_event(short_key.clone(), state.kafka_producer.clone());
         return Ok(Redirect::temporary(&url));
     }
     let db_client = state
@@ -91,37 +125,8 @@ async fn redirect_handler(
         .await
         .unwrap_or(());
 
-    let key_clone = short_key.clone();
-    let producer = state.kafka_producer.clone();
-    tokio::spawn(async move {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let payload = format!(r#"{{"key":"{}","timestamp":{}}}"#, key_clone, timestamp);
-
-        println!("Preparing to send click event for key: {}", key_clone);
-        println!("Payload: {}", payload);
-
-        let click_topic =
-            std::env::var("CLICK_TOPIC").unwrap_or_else(|_| "click_events".to_string());
-        println!("Sending to topic: {}", click_topic);
-
-        let record = FutureRecord::to(&click_topic)
-            .key(&key_clone)
-            .payload(&payload);
-        let kafka_timeout =
-            std::env::var("KAFKA_TIMEOUT_MS").unwrap_or_else(|_| "5000".to_string());
-        let kafka_timeout = kafka_timeout
-            .parse()
-            .expect("Failed to convert kafka timeout to u64");
-        let queue_timeout = Timeout::After(Duration::from_millis(kafka_timeout));
-
-        match producer.send(record, queue_timeout).await {
-            Ok(_) => println!("Successfully sent click event to Kafka for key: {}", key_clone),
-            Err((e, _)) => eprintln!("Failed to send click event to Kafka: {:?}", e),
-        }
-    });
+    // Send click event to Kafka
+    send_click_event(short_key, state.kafka_producer.clone());
 
     Ok(Redirect::temporary(&long_url))
 }
