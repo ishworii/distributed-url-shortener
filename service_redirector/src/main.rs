@@ -54,6 +54,8 @@ async fn redirect_handler(
     Path(short_key): Path<String>,
     State(state): State<SharedState>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    println!("Redirect request for key: {}", short_key);
+
     let mut redis_conn = state
         .redis_pool
         .get()
@@ -96,10 +98,15 @@ async fn redirect_handler(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let payload = format!(r#"{{"key" : {}","timestamp":{}}}"#, key_clone, timestamp,);
+        let payload = format!(r#"{{"key":"{}","timestamp":{}}}"#, key_clone, timestamp);
+
+        println!("Preparing to send click event for key: {}", key_clone);
+        println!("Payload: {}", payload);
 
         let click_topic =
             std::env::var("CLICK_TOPIC").unwrap_or_else(|_| "click_events".to_string());
+        println!("Sending to topic: {}", click_topic);
+
         let record = FutureRecord::to(&click_topic)
             .key(&key_clone)
             .payload(&payload);
@@ -109,8 +116,10 @@ async fn redirect_handler(
             .parse()
             .expect("Failed to convert kafka timeout to u64");
         let queue_timeout = Timeout::After(Duration::from_millis(kafka_timeout));
-        if let Err((e, _)) = producer.send(record, queue_timeout).await {
-            eprintln!("Failed to send click event to Kafka: {:?}", e);
+
+        match producer.send(record, queue_timeout).await {
+            Ok(_) => println!("Successfully sent click event to Kafka for key: {}", key_clone),
+            Err((e, _)) => eprintln!("Failed to send click event to Kafka: {:?}", e),
         }
     });
 

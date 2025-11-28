@@ -23,8 +23,13 @@ def connect_db():
 
 
 def run_consumer():
+    print(f"Connecting to database: {ANALYTICS_DB_URL}")
     db_conn = connect_db()
     cursor = db_conn.cursor()
+    print("Database connected successfully")
+
+    print(f"Connecting to Kafka brokers: {KAFKA_BROKERS}")
+    print(f"Topic: {CLICK_TOPIC}, Group: {GROUP_ID}")
 
     consumer = KafkaConsumer(
         CLICK_TOPIC,
@@ -35,9 +40,10 @@ def run_consumer():
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
     )
 
-    print(f"Kafka consumer connected to brokers : {KAFKA_BROKERS}")
+    print(f"Kafka consumer connected successfully! Waiting for messages...")
 
     for message in consumer:
+        print(f"Received message from Kafka: {message}")
         event = message.value
 
         short_key = event.get("key")
@@ -55,14 +61,18 @@ def run_consumer():
             VALUES (%s,%s);
             """
             cursor.execute(insert_query, (short_key, click_time))
+            print(f"Successfully inserted click event: key={short_key}, time={click_time}")
         except Exception as e:
             print(f"Error writing to DB:{e},event:{event}")
 
 
 if __name__ == "__main__":
+    print("Starting analytics worker...")
     while True:
         try:
             run_consumer()
         except Exception as e:
-            print(f"Consumer failed,restarting in 5s,{e}")
+            print(f"Consumer failed,restarting in 5s: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(5)
