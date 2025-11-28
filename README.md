@@ -4,12 +4,13 @@ A distributed URL shortening service built with a microservices architecture. Th
 
 ## Architecture Overview
 
-The system is composed of four main services:
+The system is composed of five main services:
 
 1. **Key Generation Service (KGS)** - Python (background worker)
 2. **URL Shortener Service** - Python/FastAPI
 3. **URL Redirector Service** - Rust/Axum
-4. **Supporting Infrastructure** - PostgreSQL, Redis
+4. **Analytics Worker** - Python (Kafka consumer)
+5. **Supporting Infrastructure** - PostgreSQL, Redis, Kafka
 
 Each service is containerized and communicates through a shared Docker network.
 
@@ -77,6 +78,32 @@ This lazy caching approach means only popular URLs consume cache space, while th
 - Different performance profiles - writes need strong consistency, reads prioritize speed
 - Enables language/framework choices optimized for each workload
 
+**Click event tracking:**
+- Every redirect asynchronously publishes a click event to Kafka
+- Non-blocking - doesn't slow down the redirect response
+- Decouples analytics from the critical read path
+
+### Analytics Service
+
+The analytics worker provides real-time click tracking without impacting redirect performance.
+
+**Event-driven architecture:**
+- Redirector publishes click events to Kafka (fire-and-forget)
+- Analytics worker consumes events asynchronously
+- Events include short key and timestamp
+- Stored in PostgreSQL for querying and analysis
+
+**Why Kafka?**
+- Handles massive event throughput with minimal latency
+- Provides durability - events aren't lost even if analytics worker is down
+- Enables future expansion - multiple consumers can process the same events for different purposes
+- Decouples analytics from core redirect functionality
+
+**Scalability:**
+- Multiple analytics workers can consume in parallel (Kafka consumer groups)
+- Batch processing can be added without changing the redirector
+- Event stream can feed into data warehouses or analytics platforms
+
 ### Data Storage
 
 **PostgreSQL:**
@@ -84,11 +111,18 @@ This lazy caching approach means only popular URLs consume cache space, while th
 - The `url_mapping` table uses the short key as primary key for fast lookups
 - An index on `long_url` enables the duplicate detection query
 - The `global_sequence` table provides atomic ID generation for KGS
+- The `click_logs` table stores all click events for analytics (indexed on short_key)
 
 **Redis:**
 - Set data structure for the key pool (SPOP provides atomic retrieval)
 - String keys for URL caching (simple key-value lookups)
 - Configured with appropriate TTLs to prevent unbounded growth
+
+**Kafka:**
+- Topic `click_events` stores redirect events
+- Consumer group `analytics-workers` for parallel processing
+- KRaft mode (no Zookeeper dependency) for simpler deployment
+- Events are retained to allow replay and recovery
 
 ## Configuration
 
@@ -125,9 +159,11 @@ docker-compose ps
 You should see all services healthy:
 - `tinyurl_postgres` (port 5432)
 - `tinyurl_redis` (port 6379)
+- `tinyurl_kafka` (port 9092)
 - `tinyurl_kgs`
 - `tinyurl_shortener` (port 8000)
 - `tinyurl_redirector` (port 8001)
+- `tinyurl_analytics_worker`
 
 3. Check KGS is generating keys:
 ```bash
@@ -164,6 +200,13 @@ You should see a `307 Temporary Redirect` with the location header pointing to y
 **Open in browser:**
 Simply paste `http://localhost:8001/00000lg` in your browser and you'll be redirected.
 
+**Check analytics:**
+```bash
+docker exec tinyurl_postgres psql -U user -d urls -c "SELECT * FROM click_logs ORDER BY click_timestamp DESC LIMIT 10;"
+```
+
+You'll see all the redirects tracked with timestamps.
+
 ### Stopping the Service
 
 ```bash
@@ -175,9 +218,11 @@ docker-compose down
 The docker-compose configuration includes health checks and dependency ordering:
 
 - Redis and PostgreSQL must be healthy before application services start
+- Kafka starts independently (no health check as it self-initializes)
 - KGS depends on both databases
 - Shortener depends on databases and KGS
-- Redirector depends on databases and shortener
+- Redirector depends on databases, Kafka, and shortener
+- Analytics worker depends on databases and Kafka
 
 This prevents startup race conditions where services try to connect before dependencies are ready.
 
@@ -198,10 +243,12 @@ This prevents startup race conditions where services try to connect before depen
 
 ## Future Enhancements
 
-**Analytics:**
-- Track clicks per short URL
-- Geographic distribution of requests
-- Referrer information
+**Enhanced Analytics:**
+- Aggregate click counts per URL
+- Geographic distribution of requests (from IP addresses)
+- Referrer information from HTTP headers
+- Time-series analysis and trending URLs
+- Real-time dashboards
 
 **Expiration:**
 - Allow users to set TTL on short URLs
@@ -236,12 +283,17 @@ This prevents startup race conditions where services try to connect before depen
 │   ├── requirements.txt
 │   └── shortener_app/
 │       └── api.py             # Shortening API endpoints
-└── service_redirector/        # URL Redirector Service
+├── service_redirector/        # URL Redirector Service
+│   ├── Dockerfile
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs            # Redirect handler and Kafka producer
+│       └── state.rs           # Application state and pooling
+└── service_analytics/         # Analytics Worker Service
     ├── Dockerfile
-    ├── Cargo.toml
-    └── src/
-        ├── main.rs            # Redirect handler
-        └── state.rs           # Application state and pooling
+    ├── requirements.txt
+    └── worker_app/
+        └── kafka_consumer.py  # Kafka consumer and DB writer
 ```
 
 ## Technical Notes
