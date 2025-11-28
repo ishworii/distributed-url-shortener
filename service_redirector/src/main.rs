@@ -8,8 +8,11 @@ use axum::{
     routing::get,
 };
 use deadpool_redis::redis::AsyncCommands;
+use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::util::Timeout;
+
 use state::{AppState, SharedState, create_pg_pool, create_redis_pool};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -24,10 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redis_pool = create_redis_pool(&redis_url)?;
     let db_read_pool = create_pg_pool(&db_url)?;
 
+    let producer: FutureProducer = rdkafka::config::ClientConfig::new()
+        .set("bootstrap.servers", "kafka:9092")
+        .set("message.timeout.ms", "5000")
+        .create()
+        .expect("Producer creation error");
+
     let state = Arc::new(AppState {
         redis_pool,
         db_read_pool,
         redis_ttl_seconds,
+        kafka_producer: producer,
     });
     let router = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -78,6 +88,31 @@ async fn redirect_handler(
         .set_ex(&short_key, &long_url, state.redis_ttl_seconds)
         .await
         .unwrap_or(());
+
+    let key_clone = short_key.clone();
+    let producer = state.kafka_producer.clone();
+    tokio::spawn(async move {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let payload = format!(r#"{{"key" : {}","timestamp":{}}}"#, key_clone, timestamp,);
+
+        let click_topic =
+            std::env::var("CLICK_TOPIC").unwrap_or_else(|_| "click_events".to_string());
+        let record = FutureRecord::to(&click_topic)
+            .key(&key_clone)
+            .payload(&payload);
+        let kafka_timeout =
+            std::env::var("KAFKA_TIMEOUT_MS").unwrap_or_else(|_| "5000".to_string());
+        let kafka_timeout = kafka_timeout
+            .parse()
+            .expect("Failed to convert kafka timeout to u64");
+        let queue_timeout = Timeout::After(Duration::from_millis(kafka_timeout));
+        if let Err((e, _)) = producer.send(record, queue_timeout).await {
+            eprintln!("Failed to send click event to Kafka: {:?}", e);
+        }
+    });
 
     Ok(Redirect::temporary(&long_url))
 }
