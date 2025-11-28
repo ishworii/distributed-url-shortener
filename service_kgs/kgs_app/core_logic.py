@@ -57,11 +57,14 @@ async def reserve_and_generate_block(redis_client):
 
 async def main():
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
+    low_threshold = BLOCK_SIZE * 0.2
+    print(f"KGS started. Monitoring key pool (threshold: {low_threshold} keys)")
+
     while True:
         key_count = await redis_client.scard(REDIS_KEY_SET)
-        print(f"Current available keys in Redis : {key_count}")
 
-        if key_count < BLOCK_SIZE * 0.2:
+        if key_count < low_threshold:
+            print(f"Key pool low: {key_count} keys remaining (below threshold {low_threshold})")
             await reserve_and_generate_block(redis_client)
 
         await asyncio.sleep(5)

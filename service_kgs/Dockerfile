@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python","-m","kgs_app.core_logic"]
+CMD ["python","-u","-m","kgs_app.core_logic"]
