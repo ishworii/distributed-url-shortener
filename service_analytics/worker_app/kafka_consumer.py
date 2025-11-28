@@ -53,7 +53,7 @@ def run_consumer():
             print(f"Skipping malformed message : {event}")
             continue
         click_time = time.strftime(
-            "%Y-%m-%d %H-%M:%S", time.gmtime(timestamp_sec)
+            "%Y-%m-%d %H:%M:%S", time.gmtime(timestamp_sec)
         )
         try:
             insert_query = """
